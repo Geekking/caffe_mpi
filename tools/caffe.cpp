@@ -1,3 +1,5 @@
+#include <mpi.h>
+
 #ifdef WITH_PYTHON_LAYER
 #include "boost/python.hpp"
 namespace bp = boost::python;
@@ -213,6 +215,37 @@ int train() {
     solver->Solve();
   }
   LOG(INFO) << "Optimization Done.";
+
+
+  // CHECK(Caffe::root_solver());
+  // LOG(INFO) << "Solving " << solver->net()->name();
+  // LOG(INFO) << "Learning Rate Policy: " << solver -> param().lr_policy();
+
+  // // // Initialize to false every time we start solving.
+  // // requested_early_exit_ = false;
+
+  // // if (resume_file) {
+  // //   LOG(INFO) << "Restoring previous solver status from " << resume_file;
+  // //   Restore(resume_file);
+  // // }
+
+  // // For a network that is trained by the solver, no bottom or top vecs
+  // // should be given, and we will just provide dummy vecs.
+
+  // //Step(solver -> param().max_iter() - solver->iter());
+
+  // // If we haven't already, save a snapshot after optimization, unless
+  // // overridden by setting snapshot_after_train := false
+  
+
+  // if (solver -> param().snapshot_after_train()
+  //     && (!solver -> param().snapshot() || solver->iter() % solver -> param().snapshot() != 0)) {
+  //   solver->Snapshot();
+  // }
+
+
+  LOG(INFO) << "Optimization Done.";
+
   return 0;
 }
 RegisterBrewFunction(train);
@@ -376,6 +409,9 @@ int time() {
 RegisterBrewFunction(time);
 
 int main(int argc, char** argv) {
+  
+  MPI_Init(NULL,NULL);
+
   // Print output to stderr (while still logging).
   FLAGS_alsologtostderr = 1;
   // Usage message.
@@ -402,4 +438,7 @@ int main(int argc, char** argv) {
   } else {
     gflags::ShowUsageWithFlagsRestrict(argv[0], "tools/caffe");
   }
+
+  MPI_Finalize();
+  
 }

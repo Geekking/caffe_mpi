@@ -1,16 +1,8 @@
 #!/usr/bin/env sh
 
-TOOLS=./build/tools
+CAFFE_HOME=/home/geek/codes/mpi/caffe_mpi
 
-$TOOLS/caffe train \
-    --solver=examples/cifar10/cifar10_full_solver.prototxt
+mpirun -hostfile /home/geek/codes/mpi/mpi_comm/hosts -np 2 \
+$CAFFE_HOME/build/tools/caffe train \
+    --solver=$CAFFE_HOME/examples/cifar10/cifar10_full_solver.prototxt
 
-# reduce learning rate by factor of 10
-$TOOLS/caffe train \
-    --solver=examples/cifar10/cifar10_full_solver_lr1.prototxt \
-    --snapshot=examples/cifar10/cifar10_full_iter_60000.solverstate.h5
-
-# reduce learning rate by factor of 10
-$TOOLS/caffe train \
-    --solver=examples/cifar10/cifar10_full_solver_lr2.prototxt \
-    --snapshot=examples/cifar10/cifar10_full_iter_65000.solverstate.h5

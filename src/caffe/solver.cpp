@@ -2,6 +2,7 @@
 
 #include <string>
 #include <vector>
+#include <mpi.h>
 
 #include "caffe/solver.hpp"
 #include "caffe/util/format.hpp"
@@ -192,6 +193,15 @@ void Solver<Dtype>::InitTestNets() {
 
 template <typename Dtype>
 void Solver<Dtype>::Step(int iters) {
+  // number of round for synthesis
+  const int kRound_count = 1000;
+  int world_size;
+  MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+  int my_rank;
+  MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
+
+  const int kWorld_size = world_size;
+  const int kMyrank = my_rank;
   vector<Blob<Dtype>*> bottom_vec;
   const int start_iter = iter_;
   const int stop_iter = iter_ + iters;
@@ -233,7 +243,7 @@ void Solver<Dtype>::Step(int iters) {
       smoothed_loss += (loss - losses[idx]) / average_loss;
       losses[idx] = loss;
     }
-    if (display) {
+    if (display && kMyrank == 0) {
       LOG_IF(INFO, Caffe::root_solver()) << "Iteration " << iter_
           << ", loss = " << smoothed_loss;
       const vector<Blob<Dtype>*>& result = net_->output_blobs();
@@ -265,13 +275,49 @@ void Solver<Dtype>::Step(int iters) {
     // the number of times the weights have been updated.
     ++iter_;
 
+    if(iter_ % kRound_count == 0){
+        if(kMyrank == 0)
+          LOG(INFO) << "Start synchronize parameters";
+        const vector<Blob<Dtype>*>& learnable_params = net_ -> learnable_params();
+        for(int blob_ind = 0; blob_ind < learnable_params.size(); ++blob_ind){
+          Dtype *data = learnable_params[blob_ind] -> mutable_cpu_data();
+          
+          Blob<Dtype> *avg_blob = new Blob<Dtype>(learnable_params[blob_ind] -> shape());
+          // std::memset(avg_blob->mutable_cpu_data(), 0, sizeof(Dtype) * avg_blob -> count());
+          
+          Dtype *avg_data = avg_blob -> mutable_cpu_data();
+          int rc;
+          if(sizeof(Dtype) == 4){
+            rc = MPI_Allreduce(data, avg_data,avg_blob -> count(),
+                             MPI_FLOAT, MPI_SUM,
+                              MPI_COMM_WORLD);
+          }else {
+            rc = MPI_Allreduce(data, avg_data,avg_blob -> count(),
+                             MPI_DOUBLE, MPI_SUM,
+                              MPI_COMM_WORLD);
+          }
+          if (rc != MPI_SUCCESS){
+            LOG(ERROR) << "MPI All reduce failed";
+          }
+          // update blob data
+          const Dtype alpha = 1. / (Dtype)kWorld_size;
+          caffe_gpu_scale<Dtype>(avg_blob ->count(), alpha, 
+                                  avg_blob -> mutable_gpu_data(),
+                                   learnable_params[blob_ind] -> mutable_gpu_data());
+          delete avg_blob;
+        }
+        if(kMyrank == 0)
+          LOG(INFO) << "Synchronization parameters Done.";
+    }
+
     SolverAction::Enum request = GetRequestedAction();
 
     // Save a snapshot if needed.
-    if ((param_.snapshot()
+    if ((kMyrank == 0
+      && param_.snapshot()
          && iter_ % param_.snapshot() == 0
          && Caffe::root_solver()) ||
-         (request == SolverAction::SNAPSHOT)) {
+         (request == SolverAction::SNAPSHOT) ) {
       Snapshot();
     }
     if (SolverAction::STOP == request) {
@@ -284,6 +330,15 @@ void Solver<Dtype>::Step(int iters) {
 
 template <typename Dtype>
 void Solver<Dtype>::Solve(const char* resume_file) {
+  
+  int world_size;
+  MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+  int my_rank;
+  MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
+
+  const int kWorld_size = world_size;
+  const int kMyrank = my_rank;
+
   CHECK(Caffe::root_solver());
   LOG(INFO) << "Solving " << net_->name();
   LOG(INFO) << "Learning Rate Policy: " << param_.lr_policy();
@@ -292,6 +347,7 @@ void Solver<Dtype>::Solve(const char* resume_file) {
   requested_early_exit_ = false;
 
   if (resume_file) {
+
     LOG(INFO) << "Restoring previous solver status from " << resume_file;
     Restore(resume_file);
   }
@@ -306,7 +362,7 @@ void Solver<Dtype>::Solve(const char* resume_file) {
     Snapshot();
   }
   if (requested_early_exit_) {
-    LOG(INFO) << "Optimization stopped early.";
+      LOG(INFO) << "Optimization stopped early.";
     return;
   }
   // After the optimization is done, run an additional train and test pass to
@@ -315,13 +371,15 @@ void Solver<Dtype>::Solve(const char* resume_file) {
   // training, for the train net we only run a forward pass as we've already
   // updated the parameters "max_iter" times -- this final pass is only done to
   // display the loss, which is computed in the forward pass.
-  if (param_.display() && iter_ % param_.display() == 0) {
-    Dtype loss;
-    net_->ForwardPrefilled(&loss);
-    LOG(INFO) << "Iteration " << iter_ << ", loss = " << loss;
-  }
-  if (param_.test_interval() && iter_ % param_.test_interval() == 0) {
-    TestAll();
+  if(kMyrank == 0){
+    if (param_.display() && iter_ % param_.display() == 0) {
+      Dtype loss;
+      net_->ForwardPrefilled(&loss);
+      LOG(INFO) << "Iteration " << iter_ << ", loss = " << loss;
+    }
+    if (param_.test_interval() && iter_ % param_.test_interval() == 0) {
+      TestAll();
+    }
   }
   LOG(INFO) << "Optimization Done.";
 }
